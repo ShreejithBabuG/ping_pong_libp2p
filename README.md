@@ -13,7 +13,7 @@ A peer-to-peer messaging demonstration using Rust and libp2p, supporting native 
            ▼
 ┌─────────────────────┐        ┌─────────────────────┐
 │   libp2p Server     │◄───────┤  Native Client      │
-│   TCP + WebSocket   │  QUIC  │     (Rust)          │
+│   TCP + WebSocket   │  TCP   │     (Rust)          │
 │   Ports: 9000,9001  │  9000  │                     │
 └─────────────────────┘        └─────────────────────┘
            │
@@ -29,7 +29,7 @@ A peer-to-peer messaging demonstration using Rust and libp2p, supporting native 
 ## Features
 
 - **Multi-platform support**: Native Rust clients and browser WASM clients
-- **Multiple transports**: QUIC for native clients, WebSocket for browsers
+- **Multiple transports**: TCP for native clients, WebSocket for browsers
 - **Shared types**: Same Rust message structs across all platforms
 - **Length-prefixed protocol**: 4-byte length + JSON payload
 - **No actor framework**: Direct libp2p stream usage
@@ -68,7 +68,7 @@ Listening on: /ip4/127.0.0.1/tcp/9001/ws/p2p/12D3KooW...
 Listening on: /ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...
 ```
 
-**Important**: Copy the WebSocket address (the one with `/ws` - port 9001) for the browser client.
+**Important**: Copy the addresses for use with clients.
 
 ### 3. Run the Native Client
 
@@ -121,7 +121,7 @@ ping_pong_libp2p/
 ├── server/              # Native Rust server
 │   └── src/main.rs     # TCP + WebSocket server
 ├── client/              # Native Rust client
-│   └── src/main.rs     # QUIC client
+│   └── src/main.rs     # TCP client
 └── wasm-client/         # Browser WebAssembly client
     ├── src/lib.rs      # WASM bindings
     └── www/
@@ -185,7 +185,7 @@ Wrong: `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`
    - Port 9001 (WebSocket) for browser clients
 
 2. **Client connects** using the appropriate transport:
-   - Native client uses QUIC or TCP
+   - Native client uses TCP
    - Browser client uses WebSocket
 
 3. **Message exchange**:
@@ -199,8 +199,8 @@ Wrong: `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`
 
 The same Rust code works across platforms because libp2p abstracts the transport:
 
-- **Native**: Can use QUIC, TCP, or any supported transport
-- **Browser**: Limited to WebSocket due to browser security restrictions
+- **Native**: Uses TCP with noise encryption and yamux multiplexing
+- **Browser**: Uses WebSocket due to browser security restrictions
 - **Server**: Supports multiple transports simultaneously
 
 ## Dependencies
@@ -212,3 +212,11 @@ Key libraries used:
 - `tokio` - Async runtime (native)
 - `wasm-bindgen` - Rust/JavaScript interop (browser)
 - `serde` + `serde_json` - Message serialization
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions welcome! Please open an issue or submit a pull request.
