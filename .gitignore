@@ -1,0 +1,27 @@
+# Rust build artifacts
+/target/
+*/target/
+
+# WASM build outputs
+wasm-client/pkg/
+wasm-client/www/pkg/
+
+# Cargo lock files (optional - keep for binaries, ignore for libraries)
+# Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Debug files
+*.pdb
+
+# Backup files
+*.bak
+*~
