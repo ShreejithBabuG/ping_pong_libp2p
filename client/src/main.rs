@@ -30,7 +30,11 @@ async fn main() -> Result<()> {
 
     let mut swarm = libp2p::SwarmBuilder::with_new_identity()
         .with_tokio()
-        .with_quic()
+        .with_tcp(
+            libp2p::tcp::Config::default(),
+            libp2p::noise::Config::new,
+            libp2p::yamux::Config::default,
+        )?
         .with_behaviour(|_| stream::Behaviour::new())?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
