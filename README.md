@@ -2,6 +2,10 @@
 
 A peer-to-peer messaging demonstration using Rust and libp2p, supporting native clients and WebAssembly browsers.
 
+This repository contains two main components:
+1. **Ping-Pong Demo** - Working example of libp2p messaging (server, native client, browser client)
+2. **Meerkat-Net** - Clean network abstraction layer with callback-based interface
+
 ## Architecture
 ```
 ┌─────────────────────┐
@@ -34,7 +38,57 @@ A peer-to-peer messaging demonstration using Rust and libp2p, supporting native 
 - **Length-prefixed protocol**: 4-byte length + JSON payload
 - **No actor framework**: Direct libp2p stream usage
 
-## Quick Start
+## Meerkat-Net: Network Abstraction Layer
+
+The `meerkat-net` module provides a clean interface for peer-to-peer networking that:
+
+- **Separates concerns**: Hides libp2p transport details from application logic
+- **Global addresses**: Uses internet-routable addresses that the net layer converts to libp2p routing
+- **Callback-based**: Non-blocking sends with error/message callbacks
+- **Type-safe messages**: Enum-based message types
+- **Async interface**: Modern async/await pattern
+
+### Design Principles
+```rust
+// Application defines messages
+enum MeerkatMessage {
+    Ping { content: String },
+    Pong { content: String },
+}
+
+// Application provides callbacks
+let callbacks = NetworkCallbacks {
+    on_message: Arc::new(|peer, msg| { /* handle message */ }),
+    on_send_error: Arc::new(|msg_id, error| { /* handle error */ }),
+};
+
+// Net layer handles transport
+let mut net = LibP2PNetwork::new(callbacks)?;
+net.listen(GlobalAddress::new("/ip4/0.0.0.0/tcp/9000")).await?;
+
+// Send is non-blocking, returns immediately
+let msg_id = net.send(peer_addr, MeerkatMessage::Ping { ... });
+```
+
+### Key Components
+
+- **`NetworkLayer` trait** - Async interface for send/listen/addresses
+- **`MeerkatMessage` enum** - Type-safe message definitions
+- **`GlobalAddress`** - Internet-routable address format
+- **`NetworkCallbacks`** - Notification functions for events
+- **`LibP2PNetwork`** - Real libp2p implementation
+- **`MockNetwork`** - Testing without network
+
+### Testing
+```bash
+# Run all meerkat-net tests
+cargo test -p meerkat-net
+
+# Run integration tests with real libp2p
+cargo test -p meerkat-net --test libp2p_integration_test
+```
+
+## Quick Start: Ping-Pong Demo
 
 ### Prerequisites
 
@@ -67,8 +121,6 @@ Server ready
 Listening on: /ip4/127.0.0.1/tcp/9001/ws/p2p/12D3KooW...
 Listening on: /ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...
 ```
-
-**Important**: Copy the addresses for use with clients.
 
 ### 3. Run the Native Client
 
@@ -111,21 +163,28 @@ python3 -m http.server 8080
 3. Click "Connect to Server"
 4. Type a message and click "Send Ping"
 
-You should see the ping-pong exchange in the browser log!
-
 ## Project Structure
 ```
 ping_pong_libp2p/
-├── shared/              # Shared protocol and message types
-│   └── src/lib.rs      # PingMessage, PongMessage, PING_PROTOCOL
-├── server/              # Native Rust server
+├── meerkat-net/         # Network abstraction layer
+│   ├── src/
+│   │   ├── interface.rs    # NetworkLayer trait
+│   │   ├── types.rs        # MeerkatMessage, GlobalAddress
+│   │   ├── protocol.rs     # Message serialization
+│   │   ├── libp2p_net.rs   # Real libp2p implementation
+│   │   └── mock.rs         # Mock for testing
+│   └── tests/
+│       ├── basic_test.rs              # Unit tests
+│       └── libp2p_integration_test.rs # Integration tests
+├── shared/              # Ping-pong protocol
+│   └── src/lib.rs      # PingMessage, PongMessage
+├── server/              # Demo server
 │   └── src/main.rs     # TCP + WebSocket server
-├── client/              # Native Rust client
+├── client/              # Demo native client
 │   └── src/main.rs     # TCP client
-└── wasm-client/         # Browser WebAssembly client
+└── wasm-client/         # Demo browser client
     ├── src/lib.rs      # WASM bindings
-    └── www/
-        └── index.html  # Browser UI
+    └── www/index.html  # Browser UI
 ```
 
 ## Message Protocol
@@ -170,39 +229,6 @@ Wrong: `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`
 2. Make sure you're in the `wasm-client` directory
 3. Try: `cargo clean` then rebuild
 
-### Server Shows "Address Already in Use"
-
-**Problem**: Ports 9000 or 9001 are already taken
-
-**Solution**: Kill any existing server process or change the ports in `server/src/main.rs`
-
-## How It Works
-
-### Connection Flow
-
-1. **Server starts** and listens on two ports:
-   - Port 9000 (TCP) for native Rust clients
-   - Port 9001 (WebSocket) for browser clients
-
-2. **Client connects** using the appropriate transport:
-   - Native client uses TCP
-   - Browser client uses WebSocket
-
-3. **Message exchange**:
-   - Client opens a stream to server
-   - Client sends length-prefixed `PingMessage`
-   - Server reads message, creates `PongMessage`
-   - Server sends length-prefixed response
-   - Client receives and displays pong
-
-### Transport Layer
-
-The same Rust code works across platforms because libp2p abstracts the transport:
-
-- **Native**: Uses TCP with noise encryption and yamux multiplexing
-- **Browser**: Uses WebSocket due to browser security restrictions
-- **Server**: Supports multiple transports simultaneously
-
 ## Dependencies
 
 Key libraries used:
@@ -210,5 +236,14 @@ Key libraries used:
 - `libp2p` 0.56 - Peer-to-peer networking
 - `libp2p-stream` 0.4.0-alpha - Custom stream protocol
 - `tokio` - Async runtime (native)
+- `async-trait` - Async trait methods
 - `wasm-bindgen` - Rust/JavaScript interop (browser)
 - `serde` + `serde_json` - Message serialization
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions welcome! Please open an issue or submit a pull request.
