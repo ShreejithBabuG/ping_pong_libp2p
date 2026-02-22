@@ -2,15 +2,15 @@ use meerkat_net::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[test]
-fn test_mock_ping_pong() {
+#[tokio::test]
+async fn test_mock_ping_pong() {
     // Track if message was received
     let received = Arc::new(AtomicBool::new(false));
     let received_clone = received.clone();
     
     // Create shared state
     let shared = Arc::new(std::sync::Mutex::new(
-        meerkat_net::mock::SharedMockState::default()
+        SharedMockState::default()
     ));
     
     // Create callbacks for net1
@@ -43,7 +43,7 @@ fn test_mock_ping_pong() {
     
     // Make net2 listen on an address
     let addr2 = GlobalAddress::new("mock://peer2");
-    net2.listen(addr2.clone()).unwrap();
+    net2.listen(addr2.clone()).await.unwrap();
     
     // Net1 sends a message to net2
     let msg = MeerkatMessage::Ping {
@@ -54,7 +54,7 @@ fn test_mock_ping_pong() {
     println!("Sent message with ID: {:?}", msg_id);
     
     // Give async delivery time to complete
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     
     // Check if received
     assert!(received.load(Ordering::SeqCst), "Message was not received!");

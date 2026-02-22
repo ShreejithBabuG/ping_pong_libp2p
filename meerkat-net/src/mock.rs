@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 
 pub struct MockNetwork {
+    callbacks: NetworkCallbacks,
     next_message_id: AtomicU64,
     local_id: String,
     local_addrs: Vec<GlobalAddress>,
@@ -27,10 +28,11 @@ pub struct MockPeerHandle {
 }
 
 impl MockNetwork {
-    pub fn new(_callbacks: NetworkCallbacks, shared: Arc<Mutex<SharedMockState>>) -> Self {
+    pub fn new(callbacks: NetworkCallbacks, shared: Arc<Mutex<SharedMockState>>) -> Self {
         let local_id = format!("mock-{}", rand::random::<u32>());
         
         Self {
+            callbacks,
             next_message_id: AtomicU64::new(1),
             local_id,
             local_addrs: Vec::new(),
@@ -67,8 +69,13 @@ impl NetworkLayer for MockNetwork {
             return Err(NetworkError::AlreadyListening);
         }
         
-        // MockNetwork doesn't store callbacks, so we can't register here
-        // This is a limitation of the mock - in real usage callbacks would be stored
+        // Register this network's callback
+        state.peers.insert(
+            addr.0.clone(),
+            MockPeerHandle {
+                on_message: self.callbacks.on_message.clone(),
+            },
+        );
         
         self.local_addrs.push(addr);
         Ok(())
