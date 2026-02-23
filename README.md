@@ -110,6 +110,24 @@ Tests cover: server-to-server messaging, multiple messages, server address trans
 
 The original callback-based implementation. Still useful as a working reference for the libp2p transport setup.
 
+### Design Principles
+```rust
+// Application provides callbacks
+let callbacks = NetworkCallbacks {
+    on_message: Arc::new(|peer, msg| { /* handle message */ }),
+    on_send_error: Arc::new(|msg_id, error| { /* handle error */ }),
+    on_peer_connected: None,
+    on_peer_disconnected: None,
+};
+
+// Net layer handles transport
+let mut net = LibP2PNetwork::new(callbacks)?;
+net.listen(GlobalAddress::new("/ip4/0.0.0.0/tcp/9000")).await?;
+
+// Send is non-blocking, returns immediately
+let msg_id = net.send(peer_addr, MeerkatMessage::Ping { ... });
+```
+
 ### Prerequisites
 
 - Rust 1.70 or later
@@ -133,6 +151,7 @@ Listening on: /ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...
 
 ### Run the Native Client
 ```bash
+# Use the TCP address from server output (port 9000, without /ws)
 cargo run -p meerkat-client -- /ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...
 ```
 
@@ -147,25 +166,86 @@ python3 -m http.server 8080
 
 Open http://localhost:8080, paste the WebSocket address (port 9001 with `/ws`), connect and send pings.
 
+### Testing (meerkat-net)
+```bash
+# Run all meerkat-net tests
+cargo test -p meerkat-net
+
+# Run integration tests with real libp2p
+cargo test -p meerkat-net --test libp2p_integration_test
+```
+
 ---
 
 ## Project Structure
 ```
 meerkat_libp2p/
-├── meerkat-net-v2/      # Actor-based network layer (current)
+├── meerkat-net-v2/          # Actor-based network layer (current)
 │   ├── src/
-│   │   ├── actor.rs        # NetworkActor + libp2p event loop
-│   │   ├── messages.rs     # NetworkCommand, NetworkReply, NetworkEvent
-│   │   ├── types.rs        # MeerkatMessage, Address, NodeType, SendError
+│   │   ├── actor.rs            # NetworkActor + libp2p event loop
+│   │   ├── messages.rs         # NetworkCommand, NetworkReply, NetworkEvent
+│   │   ├── types.rs            # MeerkatMessage, Address, NodeType, SendError
 │   │   └── lib.rs
 │   └── tests/
 │       └── integration_test.rs
-├── meerkat-net/         # Original callback-based layer (reference)
-├── shared/              # Ping-pong protocol types
-├── server/              # Demo server (TCP + WebSocket)
-├── client/              # Demo native client (TCP)
-└── wasm-client/         # Demo browser client (WASM)
+├── meerkat-net/             # Original callback-based layer (reference)
+│   ├── src/
+│   │   ├── interface.rs        # NetworkLayer trait, NetworkCallbacks
+│   │   ├── types.rs            # MeerkatMessage, GlobalAddress
+│   │   ├── protocol.rs         # Message serialization (length-prefixed)
+│   │   ├── libp2p_net.rs       # Real libp2p implementation
+│   │   └── mock.rs             # Mock for testing
+│   └── tests/
+│       ├── basic_test.rs              # Unit tests (mock network)
+│       └── libp2p_integration_test.rs # Integration tests (real peers)
+├── shared/                  # Ping-pong protocol types
+│   └── src/lib.rs              # PingMessage, PongMessage
+├── server/                  # Demo server
+│   └── src/main.rs             # TCP + WebSocket server
+├── client/                  # Demo native client
+│   └── src/main.rs             # TCP client
+└── wasm-client/             # Demo browser client
+    ├── src/lib.rs              # WASM bindings
+    └── www/index.html          # Browser UI
 ```
+
+## Message Protocol
+
+All messages use a length-prefixed format:
+```
+[4 bytes: length (big-endian u32)][N bytes: JSON payload]
+```
+
+Protocol identifier: `/meerkat/1.0.0`
+
+## Troubleshooting
+
+### Browser Client Won't Connect
+
+**Problem**: Connection fails or shows "MultiaddressNotSupported"
+
+**Solution**: Make sure you're using the WebSocket address (port 9001 with `/ws`), not the TCP address.
+
+Correct: `/ip4/127.0.0.1/tcp/9001/ws/p2p/12D3KooW...`
+Wrong: `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`
+
+### Native Client Can't Connect
+
+**Problem**: Connection timeout or refused
+
+**Solution**:
+1. Make sure the server is running
+2. Use the TCP address (port 9000, without `/ws`)
+3. Copy the full address including the peer ID
+
+### WASM Build Fails
+
+**Problem**: `wasm-pack` errors
+
+**Solution**:
+1. Install wasm-pack: `curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh`
+2. Make sure you're in the `wasm-client` directory
+3. Try: `cargo clean` then rebuild
 
 ## Dependencies
 
