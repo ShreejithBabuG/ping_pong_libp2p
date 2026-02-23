@@ -154,17 +154,7 @@ impl NetworkActor {
         }
     }
 
-    /// Translate canonical Address to local Multiaddr.
-    ///
-    /// Rules (from Jonathan's design):
-    /// - Server node: use canonical address directly — servers can dial IP
-    /// - Browser client: if canonical starts with /ip4/ (not directly dialable),
-    ///   prepend our relay server's WebSocket address + /p2p-circuit/
-    ///
-    /// Example:
-    ///   canonical:   /ip4/server2/tcp/9000/p2p/server2-id/p2p-circuit/p2p/client2-id
-    ///   local view:  /ip4/server1/tcp/9001/ws/p2p/server1-id/p2p-circuit/
-    ///                    /ip4/server2/tcp/9000/p2p/server2-id/p2p-circuit/p2p/client2-id
+ 
     fn translate_address(&self, canonical: &Address) -> anyhow::Result<Address> {
         match &self.node_type {
             // Servers use canonical address directly
