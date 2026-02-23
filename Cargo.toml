@@ -1,3 +1,3 @@
 [workspace]
-members = ["shared", "server", "client", "wasm-client", "meerkat-net"]
+members = ["shared", "server", "client", "wasm-client", "meerkat-net", "meerkat-net-v2"]
 resolver = "2"
