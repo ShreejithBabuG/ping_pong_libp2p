@@ -72,3 +72,45 @@ async fn test_translate_address_browser_client() {
     assert_eq!(translated.0, expected);
     println!("✓ Browser client address translation test passed!");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_multiple_messages() {
+    let mut server = NetworkActor::new(NodeType::Server).await.unwrap();
+
+    let reply = server.handle_command(NetworkCommand::Listen {
+        addr: Address::new("/ip4/127.0.0.1/tcp/0"),
+    }).await;
+
+    let server_addr = match reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Expected ListenSuccess, got {:?}", other),
+    };
+
+    let server_peer_id = server.local_peer_id();
+    let full_addr = Address::new(format!("{}/p2p/{}", server_addr.0, server_peer_id));
+
+    let mut client = NetworkActor::new(NodeType::Server).await.unwrap();
+
+    for i in 0..5 {
+        client.handle_command(NetworkCommand::SendMessage {
+            addr: full_addr.clone(),
+            msg: MeerkatMessage::Ping {
+                content: format!("Message {}", i),
+            },
+        }).await;
+    }
+
+    let mut received = 0;
+    for _ in 0..100 {
+        sleep(Duration::from_millis(100)).await;
+        while let Ok(event) = server.event_rx.try_recv() {
+            if let NetworkEvent::MessageReceived { .. } = event {
+                received += 1;
+            }
+        }
+        if received >= 5 { break; }
+    }
+
+    assert_eq!(received, 5, "Server should have received all 5 messages, got {}", received);
+    println!("✓ Multiple messages test passed!");
+}
