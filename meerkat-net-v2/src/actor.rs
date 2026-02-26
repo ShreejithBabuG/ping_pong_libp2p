@@ -1,9 +1,9 @@
-use crate::{messages::*, types::*};
+use crate::{messages::*, types::*, protocol::*};
+use futures::AsyncWriteExt;
 use kameo::Actor;
 use libp2p::{Multiaddr, PeerId};
 use libp2p_stream as stream;
 use futures::StreamExt;
-use futures::AsyncWriteExt;
 use libp2p::Stream;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -87,9 +87,6 @@ fn spawn_event_loop(fut: impl std::future::Future<Output = ()> + 'static) {
     wasm_bindgen_futures::spawn_local(fut);
 }
 
-const MEERKAT_PROTOCOL: libp2p::StreamProtocol =
-    libp2p::StreamProtocol::new("/meerkat/1.0.0");
-
 impl NetworkActor {
     pub async fn new(node_type: NodeType) -> anyhow::Result<Self> {
         let (swarm, local_peer_id) = build_swarm().await?;
@@ -119,7 +116,6 @@ impl NetworkActor {
                 let msg_id = MessageId(
                     self.next_message_id.fetch_add(1, Ordering::SeqCst)
                 );
-                // Translate canonical address to local view before sending
                 let local_addr = match self.translate_address(&addr) {
                     Ok(a) => a,
                     Err(e) => return NetworkReply::Failure(e.to_string()),
@@ -154,28 +150,28 @@ impl NetworkActor {
         }
     }
 
- 
+    /// Translate canonical Address to local Multiaddr.
+    /// Server: use canonical directly.
+    /// Browser client: prepend relay server hop for /ip4/ addresses.
     fn translate_address(&self, canonical: &Address) -> anyhow::Result<Address> {
         match &self.node_type {
-            // Servers use canonical address directly
             NodeType::Server => Ok(canonical.clone()),
-
-            // Browser clients prepend relay server hop if address starts with /ip4/
             NodeType::BrowserClient { relay_server } => {
-                if canonical.0.starts_with("/ip4/") {
-                    // Prepend: <relay_server>/p2p-circuit/<canonical>
-                    let local = format!(
+                if canonical.0.starts_with("/ip4/") || canonical.0.starts_with("/ip6/") {
+                    Ok(Address::new(format!(
                         "{}/p2p-circuit/{}",
                         relay_server.0,
                         canonical.0
-                    );
-                    Ok(Address::new(local))
+                    )))
                 } else {
-                    // Already a WS or relay address, use as-is
                     Ok(canonical.clone())
                 }
             }
         }
+    }
+
+    pub fn translate_address_pub(&self, canonical: &Address) -> Address {
+        self.translate_address(canonical).unwrap()
     }
 }
 
@@ -226,7 +222,6 @@ impl NetworkActor {
                     let event_tx = event_tx.clone();
                     tokio::spawn(async move {
                         Self::handle_incoming(peer, &mut stream, event_tx).await;
-                        let _ = stream.close().await;
                     });
                 }
 
@@ -299,23 +294,10 @@ impl NetworkActor {
     ) {
         match control.open_stream(peer, MEERKAT_PROTOCOL).await {
             Ok(mut stream) => {
-                let data = match serde_json::to_vec(&msg) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        let _ = event_tx.send(NetworkEvent::SendFailed {
-                            msg_id,
-                            error: SendError::ProtocolError(format!("Serialize: {}", e)),
-                        });
-                        return;
-                    }
-                };
-                let len = (data.len() as u32).to_be_bytes();
-                let ok = stream.write_all(&len).await.is_ok()
-                    && stream.write_all(&data).await.is_ok();
-                if !ok {
+                if let Err(e) = send_message(&mut stream, &msg).await {
                     let _ = event_tx.send(NetworkEvent::SendFailed {
                         msg_id,
-                        error: SendError::ProtocolError("Write failed".to_string()),
+                        error: SendError::ProtocolError(format!("Send failed: {}", e)),
                     });
                 }
                 let _ = stream.close().await;
@@ -334,18 +316,18 @@ impl NetworkActor {
         stream: &mut Stream,
         event_tx: mpsc::UnboundedSender<NetworkEvent>,
     ) {
-        use futures::AsyncReadExt;
-        let mut len_bytes = [0u8; 4];
-        if stream.read_exact(&mut len_bytes).await.is_err() { return; }
-        let len = u32::from_be_bytes(len_bytes) as usize;
-        let mut data = vec![0u8; len];
-        if stream.read_exact(&mut data).await.is_err() { return; }
-        if let Ok(msg) = serde_json::from_slice::<MeerkatMessage>(&data) {
-            let _ = event_tx.send(NetworkEvent::MessageReceived {
-                peer: peer.to_string(),
-                msg,
-            });
+        match recv_message(stream).await {
+            Ok(msg) => {
+                let _ = event_tx.send(NetworkEvent::MessageReceived {
+                    peer: peer.to_string(),
+                    msg,
+                });
+            }
+            Err(e) => {
+                eprintln!("Failed to receive message from {}: {}", peer, e);
+            }
         }
+        let _ = stream.close().await;
     }
 
     async fn handle_swarm_event(
@@ -389,11 +371,5 @@ impl NetworkActor {
                 None
             }
         })
-    }
-}
-
-impl NetworkActor {
-    pub fn translate_address_pub(&self, canonical: &Address) -> Address {
-        self.translate_address(canonical).unwrap()
     }
 }
