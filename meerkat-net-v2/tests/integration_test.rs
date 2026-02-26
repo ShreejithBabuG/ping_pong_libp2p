@@ -114,3 +114,99 @@ async fn test_multiple_messages() {
     assert_eq!(received, 5, "Server should have received all 5 messages, got {}", received);
     println!("✓ Multiple messages test passed!");
 }
+
+// ── Mock network tests ────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mock_send_and_receive() {
+    let registry = MockNetwork::new_registry();
+
+    let mut server = MockNetwork::new_with_registry(registry.clone());
+    let mut client = MockNetwork::new_with_registry(registry.clone());
+
+    // Listen to get a routable address
+    let reply = server.handle_command(NetworkCommand::Listen {
+        addr: Address::new("/ip4/127.0.0.1/tcp/9000"),
+    }).await;
+
+    let server_addr = match reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Expected ListenSuccess, got {:?}", other),
+    };
+
+    println!("Mock server address: {}", server_addr.0);
+
+    // Send from client to server
+    client.handle_command(NetworkCommand::SendMessage {
+        addr: server_addr,
+        msg: MeerkatMessage::Ping {
+            content: "hello from mock client".to_string(),
+        },
+    }).await;
+
+    // Message should be delivered instantly — no sleep needed
+    let event = server.event_rx.try_recv().expect("Server should have received a message");
+
+    if let NetworkEvent::MessageReceived { msg, .. } = event {
+        if let MeerkatMessage::Ping { content } = msg {
+            assert_eq!(content, "hello from mock client");
+            println!("✓ Mock send and receive test passed!");
+        }
+    } else {
+        panic!("Expected MessageReceived event");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mock_multiple_messages() {
+    let registry = MockNetwork::new_registry();
+    let mut server = MockNetwork::new_with_registry(registry.clone());
+    let mut client = MockNetwork::new_with_registry(registry.clone());
+
+    let reply = server.handle_command(NetworkCommand::Listen {
+        addr: Address::new("/ip4/127.0.0.1/tcp/9000"),
+    }).await;
+
+    let server_addr = match reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Expected ListenSuccess, got {:?}", other),
+    };
+
+    for i in 0..5 {
+        client.handle_command(NetworkCommand::SendMessage {
+            addr: server_addr.clone(),
+            msg: MeerkatMessage::Ping {
+                content: format!("Message {}", i),
+            },
+        }).await;
+    }
+
+    let mut received = 0;
+    while let Ok(event) = server.event_rx.try_recv() {
+        if let NetworkEvent::MessageReceived { .. } = event {
+            received += 1;
+        }
+    }
+
+    assert_eq!(received, 5, "Expected 5 messages, got {}", received);
+    println!("✓ Mock multiple messages test passed!");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_mock_unreachable_address() {
+    let mut client = MockNetwork::new();
+
+    client.handle_command(NetworkCommand::SendMessage {
+        addr: Address::new("/ip4/127.0.0.1/tcp/9000/p2p/nonexistent-peer"),
+        msg: MeerkatMessage::Ping {
+            content: "this should fail".to_string(),
+        },
+    }).await;
+
+    let event = client.event_rx.try_recv().expect("Should have received SendFailed");
+    assert!(
+        matches!(event, NetworkEvent::SendFailed { .. }),
+        "Expected SendFailed, got {:?}", event
+    );
+    println!("✓ Mock unreachable address test passed!");
+}
