@@ -210,3 +210,72 @@ async fn test_mock_unreachable_address() {
     );
     println!("✓ Mock unreachable address test passed!");
 }
+
+// ── NetworkLayer trait tests ──────────────────────────────────────────────────
+
+async fn send_ping_via_trait<N: meerkat_net_v2::NetworkLayer>(
+    sender: &mut N,
+    addr: Address,
+) {
+    sender.handle_command(NetworkCommand::SendMessage {
+        addr,
+        msg: MeerkatMessage::Ping {
+            content: "via trait".to_string(),
+        },
+    }).await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trait_with_mock() {
+    let registry = MockNetwork::new_registry();
+    let mut server = MockNetwork::new_with_registry(registry.clone());
+    let mut client = MockNetwork::new_with_registry(registry.clone());
+
+    let reply = server.handle_command(NetworkCommand::Listen {
+        addr: Address::new("/ip4/127.0.0.1/tcp/9000"),
+    }).await;
+
+    let server_addr = match reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Expected ListenSuccess, got {:?}", other),
+    };
+
+    send_ping_via_trait(&mut client, server_addr).await;
+
+    let event = server.try_recv_event().expect("Should have received event");
+    assert!(matches!(event, NetworkEvent::MessageReceived { .. }));
+    println!("✓ Trait with mock test passed!");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_trait_with_real_network() {
+    let mut server = NetworkActor::new(NodeType::Server).await.unwrap();
+
+    let reply = server.handle_command(NetworkCommand::Listen {
+        addr: Address::new("/ip4/127.0.0.1/tcp/0"),
+    }).await;
+
+    let server_addr = match reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Expected ListenSuccess, got {:?}", other),
+    };
+
+    let full_addr = Address::new(format!("{}/p2p/{}", server_addr.0, server.local_peer_id()));
+
+    let mut client = NetworkActor::new(NodeType::Server).await.unwrap();
+    send_ping_via_trait(&mut client, full_addr).await;
+
+    let mut received = false;
+    for _ in 0..50 {
+        sleep(Duration::from_millis(100)).await;
+        if let Some(event) = server.try_recv_event() {
+            if let NetworkEvent::MessageReceived { .. } = event {
+                received = true;
+                break;
+            }
+        }
+    }
+
+    assert!(received, "Server never received the ping via trait");
+    println!("✓ Trait with real network test passed!");
+}

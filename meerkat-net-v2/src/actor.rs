@@ -373,3 +373,17 @@ impl NetworkActor {
         })
     }
 }
+
+impl crate::network_layer::NetworkLayer for NetworkActor {
+    async fn handle_command(&mut self, cmd: NetworkCommand) -> NetworkReply {
+        self.handle_command(cmd).await
+    }
+
+    fn local_peer_id(&self) -> String {
+        self.local_peer_id()
+    }
+
+    fn try_recv_event(&mut self) -> Option<NetworkEvent> {
+        self.event_rx.try_recv().ok()
+    }
+}
