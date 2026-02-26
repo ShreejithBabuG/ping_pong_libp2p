@@ -21,7 +21,7 @@ This repository contains two components:
 │   Ports: 9000,9001  │  9000  │                     │
 └─────────────────────┘        └─────────────────────┘
            │
-           │ NetworkActor (Kameo)
+           │ NetworkLayer trait
            ▼
     ┌──────────────────────┐
     │  MeerkatMessage      │
@@ -51,8 +51,8 @@ let reply = net.handle_command(NetworkCommand::SendMessage {
     msg: MeerkatMessage::Ping { content: "hello".to_string() },
 }).await;
 
-// Events arrive on event_rx
-while let Ok(event) = net.event_rx.try_recv() {
+// Events arrive via try_recv_event (NetworkLayer trait)
+while let Some(event) = net.try_recv_event() {
     match event {
         NetworkEvent::MessageReceived { peer, msg } => { /* handle */ }
         NetworkEvent::SendFailed { msg_id, error } => { /* handle */ }
@@ -62,12 +62,48 @@ while let Ok(event) = net.event_rx.try_recv() {
 }
 ```
 
+### NetworkLayer Trait
+
+Both `NetworkActor` and `MockNetwork` implement the same trait, so the Manager can work with either:
+```rust
+pub trait NetworkLayer {
+    async fn handle_command(&mut self, cmd: NetworkCommand) -> NetworkReply;
+    fn local_peer_id(&self) -> String;
+    fn try_recv_event(&mut self) -> Option<NetworkEvent>;
+}
+```
+
+### MockNetwork
+
+For testing without real libp2p — messages delivered instantly in memory:
+```rust
+let registry = MockNetwork::new_registry();
+let mut server = MockNetwork::new_with_registry(registry.clone());
+let mut client = MockNetwork::new_with_registry(registry.clone());
+
+// Listen
+let reply = server.handle_command(NetworkCommand::Listen {
+    addr: Address::new("/ip4/127.0.0.1/tcp/9000"),
+}).await;
+
+// Send — delivered instantly, no sleep needed
+client.handle_command(NetworkCommand::SendMessage {
+    addr: server_addr,
+    msg: MeerkatMessage::Ping { content: "hello".to_string() },
+}).await;
+
+// Receive
+let event = server.try_recv_event().unwrap();
+```
+
 ### Key Components
 
 - **`NetworkActor`** - Kameo actor wrapping the full libp2p swarm
+- **`NetworkLayer`** - Trait implemented by both real and mock network
+- **`MockNetwork`** - In-memory network for unit testing
 - **`NetworkCommand`** - Messages sent TO the actor (SendMessage, Listen, GetLocalAddresses)
 - **`NetworkReply`** - Replies FROM the actor (MessageSent, ListenSuccess, LocalAddresses, Failure)
-- **`NetworkEvent`** - Async events fired by the actor (MessageReceived, SendFailed, PeerConnected, PeerDisconnected)
+- **`NetworkEvent`** - Async events (MessageReceived, SendFailed, PeerConnected, PeerDisconnected)
 - **`MeerkatMessage`** - Typed message enum (Ping, Pong, Announce, Transaction, Propagation)
 - **`Address`** - Canonical internet-routable address, serializable for inclusion in messages
 - **`NodeType`** - Server or BrowserClient, controls address translation behavior
@@ -102,7 +138,7 @@ cargo test -p meerkat-net-v2
 cargo build -p meerkat-net-v2 --target wasm32-unknown-unknown
 ```
 
-Tests cover: server-to-server messaging, multiple messages, server address translation (no-op), browser client address translation (relay prepend).
+9 tests covering: server-to-server messaging, multiple messages, address translation, mock send/receive, mock multiple messages, mock unreachable address, NetworkLayer trait with mock, NetworkLayer trait with real network.
 
 ---
 
@@ -184,10 +220,13 @@ meerkat_libp2p/
 │   ├── src/
 │   │   ├── actor.rs            # NetworkActor + libp2p event loop
 │   │   ├── messages.rs         # NetworkCommand, NetworkReply, NetworkEvent
+│   │   ├── mock.rs             # MockNetwork for testing without libp2p
+│   │   ├── network_layer.rs    # NetworkLayer trait
+│   │   ├── protocol.rs         # Wire format (length-prefixed JSON)
 │   │   ├── types.rs            # MeerkatMessage, Address, NodeType, SendError
 │   │   └── lib.rs
 │   └── tests/
-│       └── integration_test.rs
+│       └── integration_test.rs # 9 tests (real + mock + trait)
 ├── meerkat-net/             # Original callback-based layer (reference)
 │   ├── src/
 │   │   ├── interface.rs        # NetworkLayer trait, NetworkCallbacks
@@ -196,8 +235,8 @@ meerkat_libp2p/
 │   │   ├── libp2p_net.rs       # Real libp2p implementation
 │   │   └── mock.rs             # Mock for testing
 │   └── tests/
-│       ├── basic_test.rs              # Unit tests (mock network)
-│       └── libp2p_integration_test.rs # Integration tests (real peers)
+│       ├── basic_test.rs              # Unit tests
+│       └── libp2p_integration_test.rs # Integration tests
 ├── shared/                  # Ping-pong protocol types
 │   └── src/lib.rs              # PingMessage, PongMessage
 ├── server/                  # Demo server
@@ -224,14 +263,12 @@ Protocol identifier: `/meerkat/1.0.0`
 
 **Problem**: Connection fails or shows "MultiaddressNotSupported"
 
-**Solution**: Make sure you're using the WebSocket address (port 9001 with `/ws`), not the TCP address.
+**Solution**: Use the WebSocket address (port 9001 with `/ws`), not the TCP address.
 
 Correct: `/ip4/127.0.0.1/tcp/9001/ws/p2p/12D3KooW...`
 Wrong: `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`
 
 ### Native Client Can't Connect
-
-**Problem**: Connection timeout or refused
 
 **Solution**:
 1. Make sure the server is running
@@ -239,8 +276,6 @@ Wrong: `/ip4/127.0.0.1/tcp/9000/p2p/12D3KooW...`
 3. Copy the full address including the peer ID
 
 ### WASM Build Fails
-
-**Problem**: `wasm-pack` errors
 
 **Solution**:
 1. Install wasm-pack: `curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh`
