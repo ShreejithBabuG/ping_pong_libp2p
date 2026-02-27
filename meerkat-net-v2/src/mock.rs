@@ -107,6 +107,9 @@ impl MockNetwork {
                 NetworkReply::MessageSent { msg_id }
             }
 
+            NetworkCommand::ListenViaRelay { .. } => {
+                NetworkReply::Failure("Mock does not support relay".to_string())
+            }
             NetworkCommand::GetLocalAddresses => {
                 NetworkReply::LocalAddresses {
                     addrs: self.local_addrs.clone(),

@@ -13,6 +13,9 @@ pub enum NetworkCommand {
         addr: Address,
     },
     GetLocalAddresses,
+    ListenViaRelay {
+        relay_addr: Address,
+    },
 }
 
 /// Reply from Network Actor - single unified enum

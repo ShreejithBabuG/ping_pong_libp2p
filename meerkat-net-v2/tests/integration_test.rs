@@ -279,3 +279,94 @@ async fn test_trait_with_real_network() {
     assert!(received, "Server never received the ping via trait");
     println!("✓ Trait with real network test passed!");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_circuit_relay() {
+    use std::time::Duration;
+    use tokio::time::sleep;
+
+    // ── Step 1: Start relay server ────────────────────────────────────────────
+    let mut relay_server = NetworkActor::new(NodeType::Server).await.unwrap();
+
+    let relay_listen_reply = relay_server.handle_command(NetworkCommand::Listen {
+        addr: Address::new("/ip4/127.0.0.1/tcp/0"),
+    }).await;
+
+    let relay_addr = match relay_listen_reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Relay listen failed: {:?}", other),
+    };
+
+    let relay_full_addr = Address::new(format!("{}/p2p/{}", relay_addr.0, relay_server.local_peer_id()));
+    println!("Relay server address: {}", relay_full_addr.0);
+
+    // ── Step 2: Start client2, get circuit relay address ─────────────────────
+    let mut client2 = NetworkActor::new(NodeType::BrowserClient {
+        relay_server: relay_full_addr.clone(),
+    }).await.unwrap();
+
+    let _client2_peer_id = client2.local_peer_id();
+
+    let circuit_reply = client2.handle_command(NetworkCommand::ListenViaRelay {
+        relay_addr: relay_full_addr.clone(),
+    }).await;
+
+    let client2_circuit_addr = match circuit_reply {
+        NetworkReply::ListenSuccess { addr } => addr,
+        other => panic!("Circuit relay listen failed: {:?}", other),
+    };
+
+    println!("client2 circuit relay address: {}", client2_circuit_addr.0);
+    assert!(
+        client2_circuit_addr.0.contains("p2p-circuit"),
+        "Expected circuit relay address, got: {}", client2_circuit_addr.0
+    );
+
+    // Wait for relay server to confirm reservation before client1 dials through it
+    sleep(Duration::from_secs(2)).await;
+    while let Ok(e) = relay_server.event_rx.try_recv() {
+        println!("relay server event (pre-send): {:?}", e);
+    }
+    println!("Starting client1 send...");
+
+    // ── Step 3: Start client1, also a relay client (needs relay transport to dial circuit addrs)
+    let mut client1 = NetworkActor::new(NodeType::BrowserClient {
+        relay_server: relay_full_addr.clone(),
+    }).await.unwrap();
+
+    // Wait for client1 to finish identify with relay before sending via circuit
+    sleep(Duration::from_secs(3)).await;
+
+    client1.handle_command(NetworkCommand::SendMessage {
+        addr: client2_circuit_addr.clone(),
+        msg: MeerkatMessage::Ping { content: "hello via relay".to_string() },
+    }).await;
+
+    // ── Step 4: Poll until client2 receives the message ──────────────────────
+    let mut received = false;
+    for _ in 0..300 {
+        sleep(Duration::from_millis(200)).await;
+
+        while let Ok(e) = client2.event_rx.try_recv() {
+            println!("client2 got: {:?}", e);
+            if let NetworkEvent::MessageReceived { msg: MeerkatMessage::Ping { content }, .. } = e {
+                if content == "hello via relay" {
+                    received = true;
+                }
+            }
+        }
+
+        while let Ok(e) = relay_server.event_rx.try_recv() {
+            println!("relay server event: {:?}", e);
+        }
+
+        while let Ok(e) = client1.event_rx.try_recv() {
+            println!("client1 event: {:?}", e);
+        }
+
+        if received { break; }
+    }
+
+    assert!(received, "client2 never received the message via circuit relay");
+    println!("✓ Circuit relay test passed!");
+}
